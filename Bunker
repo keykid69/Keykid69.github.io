@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bunker 煤倉補煤計算器</title>
+<style>
+:root{font-family:"Segoe UI","Microsoft JhengHei",sans-serif;color:#e8eef5;background:#101820;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}body{margin:0;padding:22px;background:linear-gradient(135deg,#101820,#1b2a36);min-height:100vh}
+main{max-width:900px;margin:auto}.panel{background:#1d2b36;border:1px solid #3a4b58;border-radius:16px;padding:22px;box-shadow:0 12px 35px #0005}
+h1{font-size:24px;margin:0 0 6px}.sub{color:#a9bac8;font-size:13px;margin-bottom:22px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+label{display:block;font-size:13px;color:#b9c8d4;margin-bottom:6px}
+input{width:100%;padding:12px;border-radius:9px;border:1px solid #526574;background:#101a22;color:#fff;font-size:17px;color-scheme:dark}
+input:focus{outline:2px solid #4ba3d3;border-color:transparent}
+button{margin-top:18px;padding:13px 18px;border:0;border-radius:9px;background:#1683b5;color:white;font-weight:700;font-size:16px;cursor:pointer;width:100%}
+.results{margin-top:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.result{background:#111e27;border:1px solid #344956;border-radius:12px;padding:15px}
+.k{font-size:12px;color:#9fb1bf}.v{font-size:27px;font-weight:750;margin-top:5px;color:#fff}.unit{font-size:13px;color:#b6c7d3}
+.primary{border-color:#2d9ac9;background:#122b38}.primary .v{color:#69d0ff}
+.status{margin-top:14px;padding:12px;border-radius:9px;font-size:14px;line-height:1.55;background:#263744}
+.ok{border:1px solid #338c69}.warn{border:1px solid #c18a38}.bad{border:1px solid #b94b4b}
+table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px}td,th{padding:9px;border-bottom:1px solid #354754;text-align:right}td:first-child,th:first-child{text-align:left}
+.note{color:#9fb1bf;font-size:12px;line-height:1.6;margin-top:16px}
+.tsel{display:flex;align-items:center;gap:8px}.tsel select{flex:1;min-width:0;padding:12px;border-radius:9px;border:1px solid #526574;background:#101a22;color:#fff;font-size:17px;color-scheme:dark}.tsel select:focus{outline:2px solid #4ba3d3;border-color:transparent}.tsel span{font-size:20px;font-weight:700;color:#b9c8d4}
+@media(max-width:600px){body{padding:10px}.panel{padding:16px}.grid,.results{grid-template-columns:1fr}h1{font-size:21px}}
+</style>
+</head>
+<body>
+<main><section class="panel">
+<h1>BUNKER 煤倉補煤計算器</h1>
+<div class="sub">依序補煤｜A 倉停止點為主要輸出｜預計完成時間以起始時間推算</div>
+<div class="grid">
+<div><label>1. 煤車輸送能力（噸／小時）</label><input id="q" type="number" min="0.01" step="any" value="1200"></div>
+<div><label>2. Bunker 數量（個）</label><input id="n" type="number" min="1" step="1" value="5"></div>
+<div><label>3a. 送煤起始時間</label><div class="tsel" id="startTime" data-v="06:00"></div></div>
+<div><label>3b. 起始時間每倉初始存煤（噸）</label><input id="initial" type="number" step="any" value="600"></div>
+<div><label>4a. 目標結束時間</label><div class="tsel" id="endTime" data-v="07:00"></div></div>
+<div><label>4b. 結束時間每倉目標存煤（噸）</label><input id="target" type="number" step="any" value="780"></div>
+<div><label>5. 每倉耗煤量（噸／小時）</label><input id="use" type="number" min="0" step="any" value="60"></div>
+<div><label>6. 每次移倉時間（秒）</label><input id="move" type="number" min="0" step="any" value="52"></div>
+<div><label>7. 每次移倉落回前一倉的煤量（噸）</label><input id="spill" type="number" min="0" step="any" value="20"></div>
+<div><label>停機後皮帶延送時間（分鐘，固定）</label><input value="4" disabled></div>
+</div>
+<button onclick="calculate()">計算第一倉 A 停止目標</button>
+<div id="output" aria-live="polite"></div>
+<div class="note">
+計算假設：每倉從起始時間至結束時間持續耗煤；A 至倒數第二倉每次移倉後，固定有輸入的落煤量回到前一倉；最後一倉另接收停機後 4 分鐘的煤量（輸送能力 × 4／60）。移倉時間計入作業時間，移倉期間不另計連續輸煤；落回量視為獨立的現場實測值。若結束時間早於起始時間，視為跨日（隔天）。若總作業時間與起訖時間差不一致，程式會提示時間差。預計完成時間 = 起始時間 + 推算總作業時間。
+</div>
+</section></main>
+<script>
+function num(id){return Number(document.getElementById(id).value)}
+function fmt(x,d=2){return Number(x).toLocaleString('zh-TW',{minimumFractionDigits:d,maximumFractionDigits:d})}
+function getTime(id){
+ const el=document.getElementById(id);
+ return el.querySelector('.h').value+':'+el.querySelector('.m').value;
+}
+function initTimeSelects(){
+ const p=x=>String(x).padStart(2,'0');
+ document.querySelectorAll('.tsel').forEach(el=>{
+  const [dh,dm]=el.dataset.v.split(':');
+  let h='<select class="h" aria-label="時（24 小時制）">',m='<select class="m" aria-label="分">';
+  for(let i=0;i<24;i++)h+=`<option value="${p(i)}"${p(i)===dh?' selected':''}>${p(i)}</option>`;
+  for(let i=0;i<60;i++)m+=`<option value="${p(i)}"${p(i)===dm?' selected':''}>${p(i)}</option>`;
+  el.innerHTML=h+'</select><span>:</span>'+m+'</select>';
+ });
+}
+function parseTime(s){
+ const m=/^(\d{1,2}):(\d{2})$/.exec(s||'');
+ if(!m)return NaN;
+ return Number(m[1])*60+Number(m[2]);
+}
+function clock(totalMin){
+ // totalMin: minutes from 00:00 of the start day; rounds to the nearest second
+ const sec=Math.round(totalMin*60);
+ const day=Math.floor(sec/86400);
+ const s=((sec%86400)+86400)%86400;
+ const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60;
+ const p=x=>String(x).padStart(2,'0');
+ return {text:p(h)+':'+p(m)+(ss?':'+p(ss):''), day:day};
+}
+function calculate(){
+ const q=num('q'), n=num('n'), initial=num('initial'), target=num('target'), use=num('use'), move=num('move'), spill=num('spill');
+ const t0=parseTime(getTime('startTime'));
+ let t1=parseTime(getTime('endTime'));
+ const out=document.getElementById('output');
+ if(![q,n,initial,target,use,move,spill,t0,t1].every(Number.isFinite)||q<=0||n<1||!Number.isInteger(n)||initial<0||target<0||use<0||move<0||spill<0){
+  out.innerHTML='<div class="status bad">請確認輸入數值：起始／結束時間必須填寫；輸送能力必須大於 0；倉數必須為正整數；其他參數不可小於 0。</div>';return;
+ }
+ if(t1<=t0)t1+=1440; // crosses midnight
+ const D=t1-t0;          // available minutes
+ const H=D/60;           // available hours (consumption period)
+ const c=use/60, flow=q/60, shutdown=flow*4;
+ const times=[];
+ for(let i=0;i<n;i++){
+   const returned=(i===n-1)?shutdown:spill;
+   const t=(target-initial+use*H-returned)/flow;
+   times.push(t);
+ }
+ const tA=times[0];
+ const aStop=initial+(flow-c)*tA;
+ const aFinal=initial+flow*tA+((n===1)?shutdown:spill)-use*H;
+ const active=times.reduce((a,b)=>a+b,0);
+ const transition=(n-1)*move/60;
+ const total=active+transition+4;
+ const delta=D-total;
+ const done=clock(t0+total);
+ const doneText=done.text+(done.day>0?'（+'+done.day+' 日）':'');
+ const startText=getTime('startTime');
+ const endClock=clock(t1);
+ const endText=endClock.text+(endClock.day>0?'（+'+endClock.day+' 日）':'');
+ let status='', cls='';
+ if(times.some(t=>t<0)){
+   cls='bad';status='目前參數下，有至少一倉所需的補煤時間為負值，代表初始存量／回落量已超過目標條件，請檢查輸入。';
+ } else if(total>D+1e-8){
+   cls='bad';status='無法在 '+startText+'–'+endText+' 內完成：依目標推算的補煤時間＋移倉時間＋停機延送時間，超過可用 '+fmt(D,0)+' 分鐘，約超出 '+fmt(-delta*60,0)+' 秒。';
+ } else if(total<D-1e-8){
+   cls='warn';status='可在 '+startText+'–'+endText+' 內完成，但依目前模型會剩餘 '+fmt(delta*60,0)+' 秒未分配時間。請確認現場是否有等待／停帶時間，或移倉落煤量是否為固定實測值。';
+ } else {
+   cls='ok';status='時間核對通過：推算總作業時間等於可用的 '+fmt(D,0)+' 分鐘。';
+ }
+ let rows='';
+ times.forEach((t,i)=>{
+   const ret=(i===n-1)?shutdown:spill;
+   rows+=`<tr><td>${String.fromCharCode(65+i)} 倉</td><td>${fmt(t,2)} 分</td><td>${fmt(ret,2)} 噸</td></tr>`;
+ });
+ out.innerHTML=`
+ <div class="results">
+  <div class="result primary"><div class="k">A 倉停止進煤瞬間目標讀值（主要輸出）</div><div class="v">${fmt(aStop,2)}</div><div class="unit">噸</div></div>
+  <div class="result primary"><div class="k">預計完成時間（含停機後 4 分鐘延送）</div><div class="v">${doneText}</div><div class="unit">自 ${startText} 起算｜目標結束 ${endText}</div></div>
+  <div class="result"><div class="k">A 倉結束時間預測存煤（驗證）</div><div class="v">${fmt(aFinal,2)}</div><div class="unit">噸｜目標 ${fmt(target,2)} 噸</div></div>
+  <div class="result"><div class="k">停機後延送量（4 分鐘）</div><div class="v">${fmt(shutdown,2)}</div><div class="unit">噸</div></div>
+  <div class="result"><div class="k">推算總作業時間</div><div class="v">${fmt(total,2)}</div><div class="unit">分鐘／可用 ${fmt(D,0)} 分鐘</div></div>
+ </div>
+ <div class="status ${cls}">${status}</div>
+ <table><thead><tr><th>倉別</th><th>需要主動補煤時間</th><th>離倉後回落／延送量</th></tr></thead><tbody>${rows}</tbody></table>
+ <div class="note">A 倉計算：停止點 = 初始存煤 +（每分鐘輸送量 − 每分鐘耗煤量）× A 倉主動補煤時間。A 倉結束驗證 = 初始存煤 + A 倉主動進煤 + A→B 回落量 − 全期間耗煤量。預計完成時間 = 起始時間 + 全部補煤時間 + 移倉時間 + 4 分鐘延送。</div>`;
+}
+initTimeSelects();
+calculate();
+</script>
+</body></html>
